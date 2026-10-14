@@ -7,7 +7,7 @@ import "Model.js" as Model
 
 // System Diagnostics -- the bar half of the plugin.
 //
-// Owns the traffic-light icon and the popup host, and nothing else: the scan
+// Owns the diagnostic icon and the popup host, and nothing else: the scan
 // itself and every decision about what a finding means live in bin/diagnose.sh
 // and Model.js. This file only decides what colour to paint and when to open.
 BarWidget {
@@ -98,27 +98,18 @@ BarWidget {
       else root.togglePanel()
     }
 
-    // The traffic light itself: one lit dot, two dim ones, so the indicator
-    // reads as a signal rather than as decoration.
-    Row {
+    // Font Awesome stethoscope glyph, present in Omarchy's Nerd Font. Keep its
+    // color tied to the scan verdict so the icon remains a status indicator.
+    Text {
       anchors.centerIn: parent
-      spacing: Style.space(3)
+      text: "\uf0f1"
+      color: root.dotColor(root.activeDot())
+      font.family: root.bar ? root.bar.fontFamily : Style.font.family
+      font.pixelSize: Style.font.icon
+      renderType: Text.NativeRendering
 
-      Repeater {
-        model: 3
-
-        Rectangle {
-          required property int index
-          width: Style.space(6)
-          height: width
-          radius: width / 2
-          color: root.dotColor(index)
-          opacity: index === root.activeDot() ? 1.0 : 0.20
-
-          Behavior on opacity {
-            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
-          }
-        }
+      Behavior on color {
+        ColorAnimation { duration: 160 }
       }
     }
   }

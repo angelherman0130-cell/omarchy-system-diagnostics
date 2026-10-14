@@ -585,11 +585,15 @@ Panel {
             }
             Button {
               iconText: "\u{F06A9}"     // robot / agent
-              text: root.defaultAgent === "" ? "Send to AI" : "Send to " + root.defaultAgent
+              // Generic label on purpose: the plugin works with any agent, so
+              // the button must not be branded with one. Which agent will open
+              // is shown in the panel ("Default AI agent: …") and the tooltip.
+              text: "Send to AI"
               tooltipText: root.defaultAgent === ""
                 ? "No default agent set — the prompt will be copied instead. " +
                   "Set one with: omarchy default agent <name>"
-                : "Open " + root.defaultAgent + " with the report (omarchy agent prompt)"
+                : "Open your default AI agent (" + root.defaultAgent +
+                  ") with this report"
               foreground: root.foreground
               accent: root.accent
               bordered: true

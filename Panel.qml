@@ -68,10 +68,12 @@ Panel {
   }
 
   // ------------------------------------------------------------ paths + env
-  function localPath(relative) {
-    return Qt.resolvedUrl(relative).toLocalFile()
-  }
-  readonly property string diagnosePath: localPath("bin/diagnose.sh")
+  // Qt.resolvedUrl(...).toLocalFile() can be empty for plugin components loaded
+  // through Quickshell's plugin loader. This user plugin has a stable install
+  // location, so resolve the executable from HOME instead of passing an empty
+  // script name to /bin/sh.
+  readonly property string diagnosePath: (Quickshell.env("HOME") || "")
+    + "/.config/omarchy/plugins/angelherman.system-diagnostics/bin/diagnose.sh"
   readonly property string stateDir: (Quickshell.env("HOME") || "") + "/.local/state/system-diagnostics"
 
   // The scan needs more than PATH: hyprctl talks to the compositor through the

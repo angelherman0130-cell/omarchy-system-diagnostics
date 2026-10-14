@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "angelherman.system-diagnostics",
+  "name": "System Diagnostics",
+  "version": "1.0.0",
+  "author": "angelherman",
+  "license": "MIT",
+  "description": "Complete read-only system health diagnostic with quick/full scans. Detects errors in Omarchy, Arch, systemd, the journal, storage, packages, security, network and graphics. Produces AI-ready reports and can send them to your default Omarchy AI agent.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "System Diagnostics",
+    "description": "Traffic-light health indicator. Click for quick/full diagnostic scans, with AI-ready reports.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

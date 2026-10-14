@@ -4,6 +4,8 @@ A bar widget for [Omarchy](https://omarchy.org) that runs a **read-only** health
 scan of the machine, shows a traffic-light verdict in the bar, and produces a
 report written to be pasted into — or sent straight to — an AI assistant.
 
+![System Diagnostics panel in the Omarchy bar](preview.png)
+
 Every finding is based on local command output or system data. The scanner does
 not change system configuration, install packages, restart services, or perform
 repairs. It does create its private state directory and update a cached scan in

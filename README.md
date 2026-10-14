@@ -69,7 +69,7 @@ that instruction; supervise the agent's terminal session.
 ## Install
 
 ```sh
-omarchy plugin add <git-url> --enable
+omarchy plugin add https://github.com/angelherman0130-cell/omarchy-system-diagnostics.git --enable
 ```
 
 Or copy this folder to `~/.config/omarchy/plugins/angelherman.system-diagnostics`

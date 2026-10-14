@@ -42,8 +42,14 @@ case "$_state" in
 esac
 
 # ---------------------------------------------------------------- failed units
-_failed_lines=$(/usr/bin/systemctl --failed --no-legend --plain --no-pager 2>/dev/null | /usr/bin/grep .)
-if [ -n "$_failed_lines" ]; then
+_failed_raw=$(/usr/bin/systemctl --failed --no-legend --plain --no-pager 2>/dev/null)
+_failed_rc=$?
+_failed_lines=$(printf '%s\n' "$_failed_raw" | /usr/bin/grep .)
+if [ "$_failed_rc" -ne 0 ]; then
+  emit "systemd.failed" "$CAT" unknown 0 "Failed units" "unknown" \
+    "systemctl --failed failed (exit $_failed_rc); failed units could not be checked" \
+    "Run: systemctl --failed --no-pager"
+elif [ -n "$_failed_lines" ]; then
   _d=""
   _n=0
   while IFS= read -r _line; do
@@ -64,8 +70,14 @@ else
 fi
 
 # ---------------------------------------------------------------- user failures
-_ufailed_lines=$(/usr/bin/systemctl --user --failed --no-legend --plain --no-pager 2>/dev/null | /usr/bin/grep .)
-if [ -n "$_ufailed_lines" ]; then
+_ufailed_raw=$(/usr/bin/systemctl --user --failed --no-legend --plain --no-pager 2>/dev/null)
+_ufailed_rc=$?
+_ufailed_lines=$(printf '%s\n' "$_ufailed_raw" | /usr/bin/grep .)
+if [ "$_ufailed_rc" -ne 0 ]; then
+  emit "systemd.user_failed" "$CAT" unknown 0 "Failed user units" "unknown" \
+    "systemctl --user --failed failed (exit $_ufailed_rc); user units could not be checked" \
+    "Check the user systemd manager and run: systemctl --user --failed"
+elif [ -n "$_ufailed_lines" ]; then
   _d=""
   _n=0
   while IFS= read -r _line; do
@@ -113,30 +125,27 @@ if have systemd-analyze; then
   # after '=' is the total; summing the components as well would double count.
   _total_part=$(printf '%s' "$_btime" | /usr/bin/sed -n 's/.*=[[:space:]]*//p')
   [ -z "$_total_part" ] && _total_part="$_btime"
-  _secs=$(printf '%s' "$_total_part" | /usr/bin/grep -oE '[0-9]+min|[0-9]+(\.[0-9]+)?s' \
+  _duration_tokens=$(printf '%s' "$_total_part" | /usr/bin/grep -oE '[0-9]+min|[0-9]+(\.[0-9]+)?s')
+  _secs=$(printf '%s\n' "$_duration_tokens" \
     | /usr/bin/awk '
         /min/ { sub(/min/,""); m+=$1 }
         /s/   { sub(/s/,"");   s+=$1 }
         END   { printf "%d", m*60+s }')
   case "$_secs" in '' | *[!0-9]*) _secs=0 ;; esac
-  if [ "$_secs" -ge 60 ]; then
-    emitr "systemd.boot_time" "$CAT" problem 3 "Boot time" "${_secs}s" \
-      "The last boot took ${_secs}s, above the 60s threshold" \
-      "Find the slow units: systemd-analyze blame; systemd-analyze critical-chain" \
-      manual "Investigate slow boot" "No automatic action is taken." \
-      "raw: $_btime"
-  elif [ "$_secs" -ge 30 ]; then
+  if [ -z "$_duration_tokens" ]; then
+    emit "systemd.boot_time" "$CAT" unknown 0 "Boot time" "unknown" \
+      "systemd-analyze produced no parsable duration" ""
+  elif [ "$_secs" -ge 60 ]; then
     emitr "systemd.boot_time" "$CAT" attention 1 "Boot time" "${_secs}s" \
-      "The last boot took ${_secs}s, above the 30s threshold" \
+      "The last boot took ${_secs}s; this is slower than expected but is not by itself a boot failure" \
       "Find the slow units: systemd-analyze blame" \
       manual "Review slow services" "No automatic action is taken." \
       "raw: $_btime"
-  elif [ "$_secs" -gt 0 ]; then
-    emit "systemd.boot_time" "$CAT" ok 0 "Boot time" "${_secs}s" \
-      "Boot time is healthy" ""
   else
-    emit "systemd.boot_time" "$CAT" unknown 0 "Boot time" "unknown" \
-      "systemd-analyze produced no parsable time" ""
+    _boot_value=${_secs}s
+    [ "$_secs" -eq 0 ] && _boot_value="<1s"
+    emit "systemd.boot_time" "$CAT" ok 0 "Boot time" "$_boot_value" \
+      "Boot time is healthy" ""
   fi
 
   _blame=$(/usr/bin/systemd-analyze blame --no-pager 2>/dev/null | /usr/bin/head -5)

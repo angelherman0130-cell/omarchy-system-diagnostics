@@ -34,11 +34,22 @@ fi
 
 # ---------------------------------------------------------------- db consistency
 _dbdk=$(/usr/bin/pacman -Dk 2>&1)
+_dbdk_rc=$?
 case "$_dbdk" in
   *"No database errors"* | *"0 errors"*)
-    emit "packages.database" "$CAT" ok 0 "Package database" "consistent" \
-      "pacman reports no database errors" "" ;;
+    if [ "$_dbdk_rc" -eq 0 ]; then
+      emit "packages.database" "$CAT" ok 0 "Package database" "consistent" \
+        "pacman reports no database errors" ""
+    else
+      emit "packages.database" "$CAT" unknown 0 "Package database" "unknown" \
+        "pacman -Dk emitted a success-like message but exited $_dbdk_rc" ""
+    fi ;;
   *)
+    if [ "$_dbdk_rc" -ne 0 ] && [ -z "$_dbdk" ]; then
+      emit "packages.database" "$CAT" unknown 0 "Package database" "unknown" \
+        "pacman -Dk failed (exit $_dbdk_rc) without diagnostic output" \
+        "Run: pacman -Dk"
+    else
     _d=""
     _n=0
     while IFS= read -r _line; do
@@ -53,12 +64,22 @@ EOF
       "pacman reports inconsistencies in its local database" \
       "Review the output; a reinstall of the affected package is usually enough" \
       manual "Repair the package database" "Do not blindly delete /var/lib/pacman." \
-      $_d ;;
+      $_d
+    fi ;;
 esac
 
 # ---------------------------------------------------------------- orphans
-_orph=$(/usr/bin/pacman -Qtdq 2>/dev/null | /usr/bin/head -40)
-if [ -n "$(printf '%s' "$_orph" | /usr/bin/grep .)" ]; then
+_orph_raw=$(/usr/bin/pacman -Qtdq 2>&1)
+_orph_rc=$?
+_orph=$(printf '%s\n' "$_orph_raw" | /usr/bin/head -40)
+case "$_orph_raw" in
+  *"error:"* | *"warning:"*) _orph_has_error=1 ;;
+  *) _orph_has_error=0 ;;
+esac
+if [ "$_orph_rc" -gt 1 ] || [ "$_orph_has_error" -eq 1 ]; then
+  emit "packages.orphans" "$CAT" unknown 0 "Orphan packages" "unknown" \
+    "pacman -Qtdq failed (exit $_orph_rc); orphan status could not be checked" ""
+elif [ -n "$(printf '%s' "$_orph" | /usr/bin/grep .)" ]; then
   _n=$(printf '%s' "$_orph" | /usr/bin/grep -c .)
   _d=""
   _k=0
@@ -82,7 +103,11 @@ fi
 
 # ---------------------------------------------------------------- foreign (AUR)
 _foreign=$(/usr/bin/pacman -Qmq 2>/dev/null)
-if [ -n "$(printf '%s' "$_foreign" | /usr/bin/grep .)" ]; then
+_foreign_rc=$?
+if [ "$_foreign_rc" -ne 0 ]; then
+  emit "packages.foreign" "$CAT" unknown 0 "Foreign packages" "unknown" \
+    "pacman -Qmq failed (exit $_foreign_rc); foreign packages could not be counted" ""
+elif [ -n "$(printf '%s' "$_foreign" | /usr/bin/grep .)" ]; then
   _nf=$(printf '%s' "$_foreign" | /usr/bin/grep -c .)
   emit "packages.foreign" "$CAT" info 0 "Foreign packages" "${_nf}" \
     "${_nf} packages come from outside the official repos (AUR/manual)" \
@@ -105,8 +130,10 @@ fi
 # ---------------------------------------------------------------- updates (full)
 if is_full && have checkupdates; then
   # checkupdates uses a temporary sync database and needs no root.
-  _upd=$(/usr/bin/checkupdates 2>/dev/null | /usr/bin/head -60)
-  if [ -n "$(printf '%s' "$_upd" | /usr/bin/grep .)" ]; then
+  _upd_raw=$(/usr/bin/checkupdates 2>/dev/null)
+  _upd_rc=$?
+  _upd=$(printf '%s\n' "$_upd_raw" | /usr/bin/head -60)
+  if [ "$_upd_rc" -eq 0 ] && [ -n "$(printf '%s' "$_upd" | /usr/bin/grep .)" ]; then
     _nu=$(printf '%s' "$_upd" | /usr/bin/grep -c .)
     _d=""
     _k=0
@@ -122,17 +149,27 @@ EOF
       "${_nu} package updates are available" \
       "Apply them: sudo pacman -Syu (reboot afterwards if the kernel or Mesa updated)" \
       $_d
-  else
+  elif [ "$_upd_rc" -eq 2 ] && [ -z "$(printf '%s' "$_upd" | /usr/bin/grep .)" ]; then
     emit "packages.updates" "$CAT" ok 0 "Pending updates" "none" \
       "No pending package updates" ""
+  else
+    emit "packages.updates" "$CAT" unknown 0 "Pending updates" "unknown" \
+      "checkupdates failed (exit $_upd_rc); update availability could not be checked" \
+      "Check network and repository configuration, then run checkupdates directly"
   fi
+elif is_full; then
+  emit "packages.updates" "$CAT" unknown 0 "Pending updates" "not checked" \
+    "checkupdates is unavailable; available updates could not be checked" \
+    "Install pacman-contrib to use checkupdates"
 fi
 
 # ---------------------------------------------------------------- file check (full)
 if is_full; then
   # -Qkk verifies every installed package's files against the database. It is
   # slow, so it is gated to full mode and capped.
-  _kk=$(/usr/bin/timeout -k 2 15 /usr/bin/pacman -Qkk 2>/dev/null \
+  _kk_raw=$(/usr/bin/timeout -k 2 15 /usr/bin/pacman -Qkk 2>/dev/null)
+  _kk_rc=$?
+  _kk=$(printf '%s\n' "$_kk_raw" \
     | /usr/bin/grep -iE 'warning|error|missing|modified' \
     | /usr/bin/grep -viE '^warning: .*: mtree file is missing$' | /usr/bin/head -20)
   if [ -n "$_kk" ]; then
@@ -151,9 +188,13 @@ EOF
       "Review the lines; reinstall an affected package with: pacman -S <package>" \
       manual "Review changed files" "Modified config files under /etc are normal." \
       $_d
-  else
+  elif [ "$_kk_rc" -eq 0 ]; then
     emit "packages.file_check" "$CAT" ok 0 "Package file check" "clean" \
       "No unexpected file differences reported" ""
+  else
+    emit "packages.file_check" "$CAT" unknown 0 "Package file check" "unknown" \
+      "pacman -Qkk failed or timed out (exit $_kk_rc); package files could not be checked" \
+      "Run pacman -Qkk directly to inspect the failure"
   fi
 fi
 

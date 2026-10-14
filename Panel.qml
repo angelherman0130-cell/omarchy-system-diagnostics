@@ -29,10 +29,12 @@ Panel {
   property string lastMode: "quick"
   property string toast: ""
   property bool showAll: false
+  property bool confirmAiSend: false
   // "save-md" | "save-json" | "send-ai" | "" -- what to do once the pending
   // text has been written to disk.
   property string pendingAction: ""
   property string pendingPath: ""
+  property string pendingPrompt: ""
 
   readonly property var checks: scan && Array.isArray(scan.checks) ? scan.checks : []
   readonly property string state: Model.overallState(checks)
@@ -67,8 +69,7 @@ Panel {
 
   // ------------------------------------------------------------ paths + env
   function localPath(relative) {
-    var u = Qt.resolvedUrl(relative).toString()
-    return u.indexOf("file://") === 0 ? u.slice(7) : u
+    return Qt.resolvedUrl(relative).toLocalFile()
   }
   readonly property string diagnosePath: localPath("bin/diagnose.sh")
   readonly property string stateDir: (Quickshell.env("HOME") || "") + "/.local/state/system-diagnostics"
@@ -83,7 +84,8 @@ Panel {
       "HOME": Quickshell.env("HOME"),
       "LC_ALL": "C",
       "HYPRLAND_INSTANCE_SIGNATURE": Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE") || "",
-      "XDG_RUNTIME_DIR": Quickshell.env("XDG_RUNTIME_DIR") || ""
+      "XDG_RUNTIME_DIR": Quickshell.env("XDG_RUNTIME_DIR") || "",
+      "XDG_SESSION_TYPE": Quickshell.env("XDG_SESSION_TYPE") || ""
     }
   }
   function clipboardEnv() {
@@ -126,7 +128,10 @@ Panel {
   Component.onCompleted: root.detectAgent()
   // Re-check every time the popup opens: the user may have changed the default
   // with `omarchy default agent` since the shell started.
-  onOpenedChanged: if (root.opened) root.detectAgent()
+  onOpenedChanged: {
+    if (root.opened) root.detectAgent()
+    else root.confirmAiSend = false
+  }
 
   Process {
     id: agentDetectProc
@@ -151,10 +156,13 @@ Panel {
   // doctor.sh runs its sections behind per-section deadlines; the outer budget
   // here only needs to be the sum of them plus slack, so it is generous. Quick
   // sections total well under a minute; full adds network + graphics.
-  readonly property int budgetMs: lastMode === "full" ? 180000 : 100000
+  // These are aggregate worst-case section budgets (quick: 140s, full: 185s)
+  // plus time to assemble and persist the final document.
+  readonly property int budgetMs: lastMode === "full" ? 240000 : 180000
 
   function refresh(mode, userInitiated) {
     if (scanProc.running) return
+    root.confirmAiSend = false
     root.lastMode = mode || "quick"
     root.scanning = true
     root.lastError = ""
@@ -250,7 +258,22 @@ Panel {
         root.toast = "No default agent set, and the clipboard is busy."
       return
     }
-    root.saveText(Model.buildPrompt(root.scan), "-prompt.md", "send-ai")
+    // Reports can include hostnames, paths, network details, and journal text.
+    // Require a separate confirmation before handing any of it to an AI agent.
+    root.confirmAiSend = true
+    root.toast = "Review the disclosure below, then confirm to send."
+  }
+
+  function confirmSendToAi() {
+    if (!root.ready || !root.confirmAiSend) return
+    root.confirmAiSend = false
+    root.pendingPrompt = Model.buildPrompt(root.scan)
+    root.saveText(root.pendingPrompt, "-prompt.md", "send-ai")
+  }
+
+  function cancelSendToAi() {
+    root.confirmAiSend = false
+    root.toast = "AI send cancelled; no report was sent."
   }
 
   // Launches the agent through Omarchy itself: `omarchy agent prompt` resolves
@@ -260,12 +283,17 @@ Panel {
   // NOT --inline. --inline execs the agent in the CURRENT tty, and a click in a
   // GUI has no tty, so the agent ran with no terminal and nothing ever
   // appeared. The terminal-launching path is the one a GUI action wants.
-  function launchAgent(path) {
-    var msg = "Read the Omarchy system diagnostic report at \"" + path +
-      "\" and help me resolve the findings it lists."
-    agentProc.command = [root.omarchyBin, "agent", "prompt", msg]
+  function launchAgent(path, prompt) {
+    // Pass the complete report as the actual prompt. A path-only instruction
+    // depends on the selected agent being able to read outside its workspace.
+    // Omarchy's `agent prompt` accepts a prompt for every supported agent.
+    if (!prompt || prompt.length === 0) {
+      root.toast = "Could not send an empty report to the AI."
+      return
+    }
+    agentProc.command = [root.omarchyBin, "agent", "prompt", prompt]
     agentProc.running = true
-    root.toast = "Opening " + root.defaultAgent + " with the report…"
+    root.toast = "Opening " + root.defaultAgent + " with the full report…"
   }
 
   function toggleShowAll() { root.showAll = !root.showAll }
@@ -360,7 +388,10 @@ Panel {
         root.toast = "Could not write " + path + " (exit " + exitCode + ")."
         return
       }
-      if (action === "send-ai") root.launchAgent(path)
+      if (action === "send-ai") {
+        root.launchAgent(path, root.pendingPrompt)
+        root.pendingPrompt = ""
+      }
       else root.toast = "Saved " + path
     }
   }
@@ -602,6 +633,50 @@ Panel {
               horizontalPadding: Style.spacing.controlPaddingX - Style.space(2)
               verticalPadding: Style.spacing.controlPaddingY - Style.space(1)
               onClicked: root.sendToAi()
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.xs
+            visible: root.confirmAiSend
+
+            Text {
+              width: parent.width
+              text: "Send the complete diagnostic report to " + root.defaultAgent +
+                "? It may contain your hostname, local paths, network details, " +
+                "and excerpts from system logs. The report will be saved locally " +
+                "and included in the AI prompt. Omarchy may launch the agent with " +
+                "its configured non-interactive permissions; supervise the terminal. " +
+                "The prompt requests analysis only, but cannot enforce that."
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+            Row {
+              spacing: Style.spacing.sm
+              Button {
+                text: "Confirm and send"
+                foreground: root.foreground
+                accent: root.accent
+                bordered: true
+                enabled: !root.scanning && !teeProc.running && !agentProc.running
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.spacing.controlPaddingX - Style.space(2)
+                verticalPadding: Style.spacing.controlPaddingY - Style.space(1)
+                onClicked: root.confirmSendToAi()
+              }
+              Button {
+                text: "Cancel"
+                foreground: root.foreground
+                accent: root.accent
+                bordered: true
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.spacing.controlPaddingX - Style.space(2)
+                verticalPadding: Style.spacing.controlPaddingY - Style.space(1)
+                onClicked: root.cancelSendToAi()
+              }
             }
           }
 

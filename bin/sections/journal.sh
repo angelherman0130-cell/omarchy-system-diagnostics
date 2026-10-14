@@ -28,7 +28,17 @@ fi
 ben_boot_errors() {
   _tag=$1
   _label=$2
-  _raw=$(/usr/bin/journalctl -p 0..3 -b "$_tag" --no-pager --no-hostname -n 400 2>/dev/null \
+  _raw_all=$(/usr/bin/journalctl -p 0..3 -b "$_tag" --no-pager --no-hostname -n 400 2>/dev/null)
+  _jrc=$?
+  _id="journal.errors_current"
+  [ "$_tag" != "0" ] && _id="journal.errors_boot_$_tag"
+  if [ "$_jrc" -ne 0 ]; then
+    emit "$_id" "$CAT" unknown 0 "$_label" "unavailable" \
+      "journalctl could not read this boot's journal (exit $_jrc)" \
+      "Check journal permissions and run: journalctl -p 3 -b $_tag --no-pager"
+    return 0
+  fi
+  _raw=$(printf '%s\n' "$_raw_all" \
     | /usr/bin/grep -v 'angelherman.system-diagnostics' \
     | /usr/bin/grep -v '^-- No entries --$')
   [ -z "$(printf '%s' "$_raw" | /usr/bin/grep .)" ] && return 0
@@ -67,8 +77,6 @@ EOF
 $(printf '%s' "$_raw" | /usr/bin/tail -n 30)
 EOF
 
-  _id="journal.errors_current"
-  [ "$_tag" != "0" ] && _id="journal.errors_boot_$_tag"
   if [ "$_real" -gt 0 ]; then
     emitr "$_id" "$CAT" attention 1 "$_label" "${_real} real / ${_total} total" \
       "${_real} journal error-level entries in ${_label} are not known firmware noise" \
@@ -91,8 +99,14 @@ fi
 
 # ---------------------------------------------------------------- coredumps
 if have coredumpctl; then
-  _cores=$(/usr/bin/coredumpctl list --no-pager 2>/dev/null | /usr/bin/grep -vE '^\s*TIME|^\s*$')
-  if [ -n "$_cores" ]; then
+  _cores_all=$(/usr/bin/coredumpctl list --no-pager 2>/dev/null)
+  _cores_rc=$?
+  _cores=$(printf '%s\n' "$_cores_all" | /usr/bin/grep -vE '^\s*TIME|^\s*$')
+  if [ "$_cores_rc" -ne 0 ]; then
+    emit "journal.coredumps" "$CAT" unknown 0 "Core dumps" "unknown" \
+      "coredumpctl failed (exit $_cores_rc); recorded crashes could not be checked" \
+      "Run coredumpctl list --no-pager directly to inspect the failure"
+  elif [ -n "$_cores" ]; then
     _ntotal=$(printf '%s' "$_cores" | /usr/bin/grep -c .)
     _d=""
     _n=0
@@ -105,7 +119,14 @@ if have coredumpctl; then
 $(printf '%s' "$_cores" | /usr/bin/tail -n 10)
 EOF
     # A crash in the current boot is more urgent than an old one.
-    _thisboot=$(/usr/bin/journalctl -b 0 --no-pager -o cat 2>/dev/null | /usr/bin/grep -ci 'coredump\|segfault\|general protection\|dumped core')
+    _thisboot_raw=$(/usr/bin/journalctl -b 0 --no-pager -o cat 2>/dev/null)
+    _thisboot_rc=$?
+    if [ "$_thisboot_rc" -ne 0 ]; then
+      emit "journal.coredumps" "$CAT" unknown 0 "Core dumps" "unclassified" \
+        "Core dumps are recorded, but journal access failed so their boot could not be determined" \
+        "Check journal permissions, then run: journalctl -b 0 --no-pager"
+    else
+      _thisboot=$(printf '%s\n' "$_thisboot_raw" | /usr/bin/grep -ci 'coredump\|segfault\|general protection\|dumped core')
     if [ "$_thisboot" -gt 0 ] 2>/dev/null; then
       emitr "journal.coredumps" "$CAT" problem 3 "Core dumps" "${_ntotal} recorded" \
         "At least one process crashed during this boot" \
@@ -119,6 +140,7 @@ EOF
         manual "Review recorded crashes" "No automatic action is taken." \
         $_d
     fi
+    fi
   else
     emit "journal.coredumps" "$CAT" ok 0 "Core dumps" "none" \
       "coredumpctl has no recorded crashes" ""
@@ -131,10 +153,15 @@ fi
 # ---------------------------------------------------------------- OOM kills
 # Only the kernel OOM killer counts. Matching bare "Out of memory" catches the
 # NVIDIA driver's NV_ERR_NO_MEMORY assertions (NVRM lines), which are unrelated.
-_oom=$(/usr/bin/journalctl -k -b 0 --no-pager \
-  -g 'Out of memory: Killed process|oom-kill:|invoked oom-killer|Killed process [0-9]+' 2>/dev/null \
-  | /usr/bin/grep -v 'NVRM' | /usr/bin/grep -v '^-- No entries --$' | /usr/bin/grep .)
-if [ -n "$_oom" ]; then
+_oom_all=$(/usr/bin/journalctl -k -b 0 --no-pager \
+  -g 'Out of memory: Killed process|oom-kill:|invoked oom-killer|Killed process [0-9]+' 2>/dev/null)
+_oom_rc=$?
+_oom=$(printf '%s\n' "$_oom_all" | /usr/bin/grep -v 'NVRM' | /usr/bin/grep -v '^-- No entries --$' | /usr/bin/grep .)
+if [ "$_oom_rc" -ne 0 ]; then
+  emit "journal.oom" "$CAT" unknown 0 "OOM kills" "unknown" \
+    "journalctl could not read kernel messages (exit $_oom_rc); OOM activity could not be checked" \
+    "Check journal permissions, then run: journalctl -k -b 0"
+elif [ -n "$_oom" ]; then
   _d=""
   _n=0
   while IFS= read -r _line; do

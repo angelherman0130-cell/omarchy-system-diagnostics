@@ -33,7 +33,9 @@
 # then newline flattening.
 jstr() {
   _s=$1
-  _s=$(printf '%s' "$_s" | /usr/bin/sed \
+  # sed works line-by-line and cannot replace embedded LF via `\x0a`; flatten
+  # those first so journal/config text cannot split one JSON string across lines.
+  _s=$(printf '%s' "$_s" | /usr/bin/tr '\n' ' ' | /usr/bin/sed \
         -e 's/\\/\\\\/g' \
         -e 's/"/\\"/g' \
         -e 's/\x01/\\u0001/g' -e 's/\x02/\\u0002/g' \
@@ -41,7 +43,7 @@ jstr() {
         -e 's/\x05/\\u0005/g' -e 's/\x06/\\u0006/g' \
         -e 's/\x07/\\u0007/g' \
         -e 's/\x08/\\b/g'    -e 's/\x09/\\t/g' \
-        -e 's/\x0a/\\n/g'    -e 's/\x0b/\\u000b/g' \
+        -e 's/\x0b/\\u000b/g' \
         -e 's/\x0c/\\f/g'    -e 's/\x0d/\\r/g' \
         -e 's/\x0e/\\u000e/g' -e 's/\x0f/\\u000f/g' \
         -e 's/\x10/\\u0010/g' -e 's/\x11/\\u0011/g' \

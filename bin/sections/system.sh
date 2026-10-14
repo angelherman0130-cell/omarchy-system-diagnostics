@@ -27,23 +27,45 @@ emitd "system.identity" "$CAT" ok 0 "Host identity" "$_host" \
   "$_cpu"
 
 # ---------------------------------------------------------------- kernel
-# Flag a running kernel that is behind the installed linux package: the usual
-# cause is "updated but not rebooted", which silently withholds security fixes.
+# Compare against the package that supplied the running kernel. Comparing
+# against the generic `linux` package is wrong on Omarchy's custom kernels and
+# reports a reboot as necessary even when the active kernel is current.
 if have pacman; then
-  _inst=$(/usr/bin/pacman -Q linux 2>/dev/null | /usr/bin/awk '{print $2}')
-  if [ -n "$_inst" ] && [ -n "$_kernel" ]; then
-    case "$_kernel" in
-      "$_inst"*)
-        emit "system.kernel" "$CAT" ok 0 "Kernel" "$_kernel" \
-          "Running kernel matches the installed linux package" "" ;;
-      *)
-        emitr "system.kernel" "$CAT" attention 1 "Kernel" "$_kernel" \
-          "Installed linux package is $_inst but the running kernel is $_kernel" \
-          "Reboot to start the updated kernel and pick up its fixes" \
-          safe "Reboot" "A reboot loads the installed kernel. Not run by this plugin." \
-          "running: $_kernel" "installed: $_inst" ;;
-    esac
+  _pkgbase=$(read_file "/usr/lib/modules/$_kernel/pkgbase")
+  if [ -n "$_pkgbase" ] && [ -n "$_kernel" ]; then
+    _kernel_pkg=$(/usr/bin/pacman -Q "$_pkgbase" 2>/dev/null)
+    _kernel_pkg_rc=$?
+    _inst=$(printf '%s\n' "$_kernel_pkg" | /usr/bin/awk 'NR==1 {print $2}')
+    # Arch package versions use dots for pkgrel separators such as .arch1;
+    # uname uses hyphens ( -arch1 ). Normalize before comparing.
+    _inst_release=$(printf '%s' "$_inst" | /usr/bin/sed \
+      -e 's/\.arch/-arch/g' -e 's/\.zen/-zen/g' \
+      -e 's/\.hardened/-hardened/g' -e 's/\.lts/-lts/g')
+    if [ "$_kernel_pkg_rc" -ne 0 ] || [ -z "$_inst" ]; then
+      emit "system.kernel" "$CAT" unknown 0 "Kernel" "unknown" \
+        "The running kernel identifies package $_pkgbase, but its installed package version could not be read" \
+        "Run: pacman -Q '$_pkgbase'"
+    else
+      case "$_kernel" in
+        "$_inst_release"*)
+          emit "system.kernel" "$CAT" ok 0 "Kernel" "$_kernel" \
+            "Running kernel matches installed package $_pkgbase ($_inst)" "" ;;
+        *)
+          emitr "system.kernel" "$CAT" attention 1 "Kernel" "$_kernel" \
+            "Installed package $_pkgbase is $_inst but the running kernel is $_kernel" \
+            "Reboot to start the updated kernel and pick up its fixes" \
+            safe "Reboot" "A reboot loads the installed kernel. Not run by this plugin." \
+            "running: $_kernel" "package: $_pkgbase $_inst" ;;
+      esac
+    fi
+  else
+    emit "system.kernel" "$CAT" unknown 0 "Kernel" "unknown" \
+      "Could not identify the package that supplied the running kernel" \
+      "Check /usr/lib/modules/$(uname -r)/pkgbase and compare with pacman -Q"
   fi
+else
+  emit "system.kernel" "$CAT" unknown 0 "Kernel" "unknown" \
+    "pacman is unavailable; installed kernel version could not be compared with the running kernel" ""
 fi
 
 # ---------------------------------------------------------------- uptime
@@ -51,16 +73,11 @@ _up_s=$(read_file /proc/uptime | /usr/bin/awk '{print int($1)}')
 if [ -n "$_up_s" ]; then
   _up_d=$(( _up_s / 86400 ))
   _up_h=$(( (_up_s % 86400) / 3600 ))
-  if [ "$_up_d" -gt 30 ]; then
-    emitr "system.uptime" "$CAT" attention 1 "Uptime" "${_up_d}d ${_up_h}h" \
-      "The machine has been up for ${_up_d} days" \
-      "A periodic reboot applies kernel and firmware updates" \
-      safe "Reboot when convenient" "Frees stale state and loads published updates." \
-      "uptime_seconds: $_up_s"
-  else
-    emit "system.uptime" "$CAT" info 0 "Uptime" "${_up_d}d ${_up_h}h" \
-      "System has been up for ${_up_s}s" ""
-  fi
+  emit "system.uptime" "$CAT" info 0 "Uptime" "${_up_d}d ${_up_h}h" \
+    "System has been up for ${_up_s}s; uptime alone does not indicate a fault" ""
+else
+  emit "system.uptime" "$CAT" unknown 0 "Uptime" "unknown" \
+    "/proc/uptime could not be read" ""
 fi
 
 # ---------------------------------------------------------------- load average
@@ -140,6 +157,9 @@ elif [ "$_swaptotal_k" = "0" ]; then
   emit "system.swap" "$CAT" info 0 "Swap" "none" \
     "No swap is configured" \
     "Omarchy laptops usually have a swapfile; hibernation needs one"
+else
+  emit "system.swap" "$CAT" unknown 0 "Swap" "unknown" \
+    "Swap totals could not be read from /proc/meminfo" ""
 fi
 
 # ---------------------------------------------------------------- thermals
@@ -193,6 +213,9 @@ if [ -n "$_governor" ]; then
       emit "system.cpu_governor" "$CAT" info 0 "CPU governor" "$_governor" \
         "Active CPU scaling governor" ;;
   esac
+else
+  emit "system.cpu_governor" "$CAT" unknown 0 "CPU governor" "not exposed" \
+    "The scaling governor is not exposed at /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor" ""
 fi
 
 emit_json "$CAT" "$MODE"

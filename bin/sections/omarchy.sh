@@ -265,8 +265,37 @@ fi
 # ---------------------------------------------------------------- menu extension
 _menu="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 if [ -r "$_menu" ]; then
-  # Strip // and /* */ comments, then validate with a JSON parser if present.
-  _stripped=$(/usr/bin/sed -e 's://.*$::' -e ':a; s:/\*[^*]*\*/::g; ta' "$_menu" 2>/dev/null)
+  # Strip JSONC comments only outside quoted strings, preserving URLs such as
+  # "https://example.org". A simple sed replacement mistakes those for comments.
+  _stripped=$(/usr/bin/awk '
+    {
+      out = ""
+      in_string = 0
+      escaped = 0
+      line_comment = 0
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        n = substr($0, i + 1, 1)
+        if (line_comment) continue
+        if (in_string) {
+          out = out c
+          if (escaped) escaped = 0
+          else if (c == "\\") escaped = 1
+          else if (c == "\"") in_string = 0
+          continue
+        }
+        if (in_block) {
+          if (c == "*" && n == "/") { in_block = 0; i++ }
+          continue
+        }
+        if (c == "\"") { in_string = 1; out = out c; continue }
+        if (c == "/" && n == "/") { line_comment = 1; continue }
+        if (c == "/" && n == "*") { in_block = 1; i++; continue }
+        out = out c
+      }
+      print out
+    }
+  ' "$_menu" 2>/dev/null)
   if have jq; then
     if printf '%s' "$_stripped" | /usr/bin/jq . >/dev/null 2>&1; then
       emit "omarchy.menu_extension" "$CAT" ok 0 "Menu extension" "valid" \

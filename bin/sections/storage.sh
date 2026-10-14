@@ -79,7 +79,13 @@ EOF
   elif [ "$_worst_i" -ge 0 ]; then
     emit "storage.inodes" "$CAT" ok 0 "Inode use" "${_worst_i}% used" \
       "All filesystems below 85% inodes" ""
+  else
+    emit "storage.inodes" "$CAT" unknown 0 "Inode use" "unknown" \
+      "df did not report numeric inode usage for any filesystem" ""
   fi
+else
+  emit "storage.inodes" "$CAT" unknown 0 "Inode use" "unknown" \
+    "df is unavailable; inode use could not be checked" ""
 fi
 
 # ---------------------------------------------------------------- read-only remount
@@ -103,29 +109,51 @@ EOF
     emit "storage.io_errors" "$CAT" ok 0 "Filesystem I/O errors" "none" \
       "No filesystem or I/O errors in this boot" ""
   fi
+else
+  emit "storage.io_errors" "$CAT" unknown 0 "Filesystem I/O errors" "unknown" \
+    "journalctl is unavailable; kernel filesystem errors could not be checked" ""
 fi
 
 # ---------------------------------------------------------------- btrfs
-if have btrfs && is_full; then
-  _btrfs_mnt=""
+if is_full; then
   if have findmnt; then
-    _btrfs_mnt=$(/usr/bin/findmnt -n -t btrfs -o TARGET 2>/dev/null | /usr/bin/head -n 1)
+    _btrfs_mounts=$(/usr/bin/findmnt -rn -t btrfs -o TARGET 2>/dev/null)
+    _findmnt_rc=$?
+  else
+    _btrfs_mounts=""
+    _findmnt_rc=127
   fi
-  if [ -n "$_btrfs_mnt" ]; then
-    _dstats=$(/usr/bin/btrfs device stats "$_btrfs_mnt" 2>/dev/null | /usr/bin/grep -vE ' 0$')
-    if [ -n "$_dstats" ]; then
+  if [ "$_findmnt_rc" -ne 0 ]; then
+    emit "storage.btrfs" "$CAT" unknown 0 "Btrfs device stats" "unknown" \
+      "findmnt failed or is unavailable; mounted Btrfs filesystems could not be identified" ""
+  elif [ -z "$_btrfs_mounts" ]; then
+    emit "storage.btrfs" "$CAT" info 0 "Btrfs device stats" "not applicable" \
+      "No mounted Btrfs filesystem was detected" ""
+  elif ! have btrfs; then
+    emit "storage.btrfs" "$CAT" unknown 0 "Btrfs device stats" "not checked" \
+      "A Btrfs filesystem is mounted but the btrfs utility is unavailable" ""
+  else
+    _btrfs_mnt=$(printf '%s\n' "$_btrfs_mounts" | /usr/bin/head -n 1)
+    _dstats_raw=$(/usr/bin/btrfs device stats "$_btrfs_mnt" 2>/dev/null)
+    _dstats_rc=$?
+    _dstats=$(printf '%s\n' "$_dstats_raw" | /usr/bin/grep -vE ' 0$')
+    if [ "$_dstats_rc" -ne 0 ]; then
+      emit "storage.btrfs" "$CAT" unknown 0 "Btrfs device stats" "unreadable" \
+        "btrfs device stats failed on $_btrfs_mnt (exit $_dstats_rc)" \
+        "Run: btrfs device stats '$_btrfs_mnt'"
+    elif [ -n "$_dstats" ]; then
       _d=""
       while IFS= read -r _line; do [ -n "$_line" ] && _d="$_d $(printf '%s' "$_line" | /usr/bin/head -c 300)"; done <<EOF
 $_dstats
 EOF
       emitr "storage.btrfs" "$CAT" problem 3 "Btrfs device stats" "errors" \
         "btrfs device stats reports non-zero error counters on $_btrfs_mnt" \
-        "Inspect: btrfs device stats $_btrfs_mnt; consider a scrub" \
+        "Inspect: btrfs device stats '$_btrfs_mnt'; consider a scrub" \
         manual "Investigate Btrfs errors" "Scrubbing is read-only but not run here." \
         $_d
     else
       emit "storage.btrfs" "$CAT" ok 0 "Btrfs device stats" "clean" \
-        "No Btrfs device errors on $_btrfs_mnt (or not Btrfs)" ""
+        "No Btrfs device errors on $_btrfs_mnt" ""
     fi
   fi
 fi
@@ -158,6 +186,9 @@ if is_full && have smartctl; then
     emit "storage.smart" "$CAT" unknown 0 "SMART health" "unreadable" \
       "smartctl could not read any disk (common without root or on NVMe passthrough)" ""
   fi
+elif is_full; then
+  emit "storage.smart" "$CAT" unknown 0 "SMART health" "not checked" \
+    "smartctl is unavailable; disk health could not be queried" ""
 fi
 
 emit_json "$CAT" "$MODE"

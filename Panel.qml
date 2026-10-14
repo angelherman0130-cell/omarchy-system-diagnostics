@@ -776,6 +776,26 @@ Panel {
                   wrapMode: Text.WordWrap
                   leftPadding: Style.space(12)
                 }
+                Column {
+                  width: parent.width
+                  spacing: Style.space(2)
+                  visible: finding.chk.details && finding.chk.details.length > 0
+
+                  Repeater {
+                    model: finding.chk.details || []
+
+                    Text {
+                      required property string modelData
+                      width: parent.width
+                      text: "• " + modelData
+                      leftPadding: Style.space(12)
+                      color: Qt.alpha(root.foreground, 0.72)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      wrapMode: Text.WordWrap
+                    }
+                  }
+                }
               }
             }
           }

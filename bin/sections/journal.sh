@@ -98,56 +98,50 @@ if is_full; then
 fi
 
 # ---------------------------------------------------------------- coredumps
-if have coredumpctl; then
-  _cores_all=$(/usr/bin/coredumpctl list --no-pager 2>/dev/null)
+if have coredumpctl && have jq; then
+  # JSON avoids parsing coredumpctl's human-oriented table (which varies across
+  # systemd versions). Keep a bounded, newest-first inventory for the UI/report.
+  _cores_json=$(/usr/bin/coredumpctl --json=short --no-pager --reverse -n 50 list 2>/dev/null)
   _cores_rc=$?
-  _cores=$(printf '%s\n' "$_cores_all" | /usr/bin/grep -vE '^\s*TIME|^\s*$')
-  if [ "$_cores_rc" -ne 0 ]; then
-    emit "journal.coredumps" "$CAT" unknown 0 "Core dumps" "unknown" \
-      "coredumpctl failed (exit $_cores_rc); recorded crashes could not be checked" \
-      "Run coredumpctl list --no-pager directly to inspect the failure"
-  elif [ -n "$_cores" ]; then
-    _ntotal=$(printf '%s' "$_cores" | /usr/bin/grep -c .)
-    _d=""
-    _n=0
-    while IFS= read -r _line; do
-      [ -z "$_line" ] && continue
-      _d="$_d $(printf '%s' "$_line" | /usr/bin/head -c 300)"
-      _n=$((_n + 1))
-      [ "$_n" -ge 10 ] && break
-    done <<EOF
-$(printf '%s' "$_cores" | /usr/bin/tail -n 10)
-EOF
-    # A crash in the current boot is more urgent than an old one.
-    _thisboot_raw=$(/usr/bin/journalctl -b 0 --no-pager -o cat 2>/dev/null)
-    _thisboot_rc=$?
-    if [ "$_thisboot_rc" -ne 0 ]; then
-      emit "journal.coredumps" "$CAT" unknown 0 "Core dumps" "unclassified" \
-        "Core dumps are recorded, but journal access failed so their boot could not be determined" \
-        "Check journal permissions, then run: journalctl -b 0 --no-pager"
-    else
-      _thisboot=$(printf '%s\n' "$_thisboot_raw" | /usr/bin/grep -ci 'coredump\|segfault\|general protection\|dumped core')
-    if [ "$_thisboot" -gt 0 ] 2>/dev/null; then
-      emitr "journal.coredumps" "$CAT" problem 3 "Core dumps" "${_ntotal} recorded" \
-        "At least one process crashed during this boot" \
-        "Inspect the newest: coredumpctl info; coredumpctl gdb" \
-        manual "Investigate the crashing program" "No automatic action is taken." \
-        $_d
-    else
-      emitr "journal.coredumps" "$CAT" attention 1 "Core dumps" "${_ntotal} recorded" \
-        "Process crashes were recorded by coredumpctl (none this boot)" \
-        "Inspect the newest: coredumpctl info" \
-        manual "Review recorded crashes" "No automatic action is taken." \
-        $_d
-    fi
-    fi
+  if [ "$_cores_rc" -ne 0 ] || ! printf '%s' "$_cores_json" | /usr/bin/jq -e 'type == "array"' >/dev/null 2>&1; then
+    emit "journal.coredumps" "$CAT" unknown 0 "Recorded crashes" "unknown" \
+      "coredumpctl could not provide a readable crash inventory; recorded crashes could not be checked" \
+      "Run coredumpctl --json=short --no-pager list directly to inspect the failure"
   else
-    emit "journal.coredumps" "$CAT" ok 0 "Core dumps" "none" \
-      "coredumpctl has no recorded crashes" ""
+    _cores_count=$(printf '%s' "$_cores_json" | /usr/bin/jq 'length')
+    if [ "$_cores_count" -gt 0 ]; then
+      _d=$(printf '%s' "$_cores_json" | /usr/bin/jq -r '.[] | [.time, .pid, .sig, .corefile, .exe] | @tsv' | while IFS="$(printf '\t')" read -r _time _pid _sig _core _exe; do
+  _when=$(date -d "@$((${_time:-0} / 1000000))" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || printf 'time unknown')
+  case "$_sig" in
+    4) _signal=SIGILL ;; 5) _signal=SIGTRAP ;; 6) _signal=SIGABRT ;;
+    7) _signal=SIGBUS ;; 8) _signal=SIGFPE ;; 11) _signal=SIGSEGV ;;
+    *) _signal="signal $_sig" ;;
+  esac
+  case "$_core" in present) _availability="core available" ;; *) _availability="core unavailable ($_core)" ;; esac
+  printf '%s\n' "$_when — $_exe (PID $_pid, $_signal; $_availability)"
+done)
+      # Preserve each full crash description as one JSON details entry.
+      set --
+      while IFS= read -r _line; do
+        [ -z "$_line" ] || set -- "$@" "$_line"
+      done <<EOF
+$_d
+EOF
+      emitr "journal.coredumps" "$CAT" attention 1 "Recorded crashes" "${_cores_count} recent (up to 50)" \
+        "Recorded process crashes are listed below; their boot timing is not classified" \
+        "Inspect a crash with: coredumpctl info <PID>; diagnose with your debugger before attempting a repair" \
+        manual "Review the affected programs" "No automatic action is taken." "$@"
+    else
+      emit "journal.coredumps" "$CAT" ok 0 "Recorded crashes" "none" \
+        "coredumpctl has no recorded crashes in the available journal" ""
+    fi
   fi
+elif ! have coredumpctl; then
+  emit "journal.coredumps" "$CAT" unknown 0 "Recorded crashes" "unknown" \
+    "coredumpctl is not available; crashes recorded as core dumps cannot be listed" ""
 else
-  emit "journal.coredumps" "$CAT" unknown 0 "Core dumps" "unknown" \
-    "coredumpctl is not available" ""
+  emit "journal.coredumps" "$CAT" unknown 0 "Recorded crashes" "unknown" \
+    "jq is not available to safely parse coredumpctl's JSON inventory" "Install jq or run coredumpctl --json=short --no-pager list manually"
 fi
 
 # ---------------------------------------------------------------- OOM kills

@@ -18,6 +18,12 @@ repairs. It does create its private state directory and update a cached scan in
   is shown amber, never green: an unrun probe is not a pass.
 - **Quick scan** — local only, a few seconds (system, Omarchy, systemd, journal,
   storage, packages, security).
+- **Crash inventory** — lists up to 50 recent crashes recorded by `coredumpctl`,
+  including time, executable, signal, and whether the core file is available.
+  This is a best-effort inventory, not every crash that has ever happened:
+  events can be absent, rotated out, or hidden by journal permissions. The
+  plugin suggests investigation steps but never repairs, restarts, or deletes
+  anything automatically.
 - **Full scan** — adds the slower probes (network reachability and DNS, GPU
   drivers and Vulkan, SMART disk health, package updates, `pacman -Qkk`).
 - **AI-ready output** — a prompt states the verdict, lists every finding with

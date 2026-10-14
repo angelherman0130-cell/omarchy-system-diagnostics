@@ -33,12 +33,19 @@ which agent you chose:
 omarchy default agent            # prints e.g. opencode, claude, codex, gemini…
 ```
 
-That same slug is shown in the panel (`Default AI agent: opencode`) and on the
-button (`Send to opencode`). If a default is set, one click launches it through
-`omarchy agent prompt` — which applies that agent's own non-interactive flags
-and opens it in a terminal window with the report. This works for any agent
+The answer is read **per user**, from the downloader's own Omarchy configuration,
+so the plugin always opens *their* agent — not the author's. Because it goes
+through the CLI, the plugin carries no list of agents and works for any agent
 Omarchy supports (`opencode`, `claude`, `codex`, `gemini`, `grok`, `copilot`,
-`crush`, `cursor-agent`, `muse`, `pi`, `omp`, `hermes`, `openclaw`).
+`crush`, `cursor-agent`, `muse`, `pi`, `omp`, `hermes`, `openclaw`) without a
+code change. Detection is re-run every time the panel opens, and the `omarchy`
+binary is resolved from a short candidate list so a repackaged Omarchy cannot
+break it on another machine.
+
+That slug is shown in the panel (`Default AI agent: claude`) and on the button
+(`Send to claude`). If a default is set, one click launches it through
+`omarchy agent prompt` — which applies that agent's own non-interactive flags
+and opens it in a terminal window with the report.
 
 If **no** default agent is set, nothing is launched silently: the ready-to-paste
 prompt is put on your clipboard and the panel tells you how to choose one:

@@ -103,11 +103,23 @@ Panel {
   // The probe runs with the inherited environment (no clearEnvironment):
   // omarchy-default-agent reads $HOME/.config and prints the slug, or prints
   // nothing and exits 0 when no agent is chosen.
+  // The `omarchy` CLI itself. The omarchy package installs it at
+  // /usr/bin/omarchy on every Omarchy system, but the plugin resolves it from a
+  // short candidate list instead of trusting a single path, so a repackaged
+  // Omarchy cannot silently break agent detection on somebody else's machine.
+  property string omarchyBin: "/usr/bin/omarchy"
   property string defaultAgent: ""
 
   function detectAgent() {
     if (agentDetectProc.running) return
-    agentDetectProc.command = ["/usr/bin/omarchy", "default", "agent"]
+    // Resolve the CLI and ask it which agent THIS user chose, in one probe: the
+    // first stdout line is the resolved binary, the second is the slug (empty
+    // when no default is set). `omarchy default agent` reads the invoking user's
+    // own config, so the answer is always the downloader's agent, never ours.
+    agentDetectProc.command = ["/bin/sh", "-c",
+      'for c in /usr/bin/omarchy /bin/omarchy /usr/share/omarchy/bin/omarchy; do ' +
+      'if [ -x "$c" ]; then printf "%s\\n" "$c"; exec "$c" default agent; fi; done; ' +
+      'exit 1']
     agentDetectProc.running = true
   }
 
@@ -121,9 +133,16 @@ Panel {
     stdout: StdioCollector {
       // `text` here is a property (StdioCollector), not the FileView `text()`.
       waitForEnd: true
-      onStreamFinished: root.defaultAgent = String(text).trim()
+      onStreamFinished: {
+        var lines = String(text).split("\n")
+        var bin = (lines[0] || "").trim()
+        if (bin !== "") root.omarchyBin = bin
+        root.defaultAgent = (lines.length > 1 ? lines[1] : "").trim()
+      }
     }
     onExited: function(exitCode) {
+      // No omarchy CLI found, or the probe failed: leave defaultAgent empty so
+      // the feature degrades to the clipboard instead of opening nothing.
       if (exitCode !== 0) root.defaultAgent = ""
     }
   }
@@ -244,7 +263,7 @@ Panel {
   function launchAgent(path) {
     var msg = "Read the Omarchy system diagnostic report at \"" + path +
       "\" and help me resolve the findings it lists."
-    agentProc.command = ["/usr/bin/omarchy", "agent", "prompt", msg]
+    agentProc.command = [root.omarchyBin, "agent", "prompt", msg]
     agentProc.running = true
     root.toast = "Opening " + root.defaultAgent + " with the report…"
   }
